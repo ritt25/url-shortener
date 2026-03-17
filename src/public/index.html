@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>snip — URL Shortener</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet"/>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #f7f5f2;
+      --surface: #ffffff;
+      --border: #e8e4de;
+      --ink: #1a1814;
+      --ink-muted: #9a9690;
+      --accent: #2d5a27;
+      --accent-light: #eaf2e8;
+      --danger: #c0392b;
+      --mono: 'DM Mono', monospace;
+      --serif: 'Instrument Serif', serif;
+      --sans: 'DM Sans', sans-serif;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: var(--sans);
+      font-size: 15px;
+      line-height: 1.6;
+    }
+
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: radial-gradient(circle, #ccc8c0 1px, transparent 1px);
+      background-size: 28px 28px;
+      opacity: 0.35;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .page {
+      position: relative;
+      z-index: 1;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 20px;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 48px;
+      animation: fadeUp 0.6s ease both;
+    }
+
+    header .wordmark {
+      font-family: var(--serif);
+      font-size: 3rem;
+      letter-spacing: -0.02em;
+      color: var(--ink);
+      line-height: 1;
+    }
+
+    header .wordmark em {
+      font-style: italic;
+      color: var(--accent);
+    }
+
+    header p {
+      margin-top: 8px;
+      color: var(--ink-muted);
+      font-size: 0.875rem;
+      font-weight: 300;
+      letter-spacing: 0.04em;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 32px;
+      width: 100%;
+      max-width: 540px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.04), 0 0 0 1px rgba(0,0,0,0.02);
+      animation: fadeUp 0.6s ease 0.1s both;
+    }
+
+    .section-label {
+      font-size: 0.7rem;
+      font-weight: 500;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--ink-muted);
+      margin-bottom: 10px;
+    }
+
+    .input-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 24px;
+    }
+
+    .input-row input {
+      flex: 1;
+      padding: 11px 14px;
+      border: 1.5px solid var(--border);
+      border-radius: 10px;
+      font-family: var(--sans);
+      font-size: 0.9rem;
+      color: var(--ink);
+      background: var(--bg);
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .input-row input:focus {
+      border-color: var(--accent);
+      background: #fff;
+    }
+
+    .input-row input::placeholder { color: var(--ink-muted); }
+
+    .btn {
+      padding: 11px 20px;
+      border-radius: 10px;
+      border: none;
+      cursor: pointer;
+      font-family: var(--sans);
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+    }
+
+    .btn-primary { background: var(--ink); color: #fff; }
+    .btn-primary:hover { background: #333; transform: translateY(-1px); }
+    .btn-primary:active { transform: translateY(0); }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+    .result-box {
+      background: var(--accent-light);
+      border: 1.5px solid #c5dfc2;
+      border-radius: 10px;
+      padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+      animation: fadeUp 0.3s ease both;
+    }
+
+    .result-box a {
+      font-family: var(--mono);
+      font-size: 0.875rem;
+      color: var(--accent);
+      text-decoration: none;
+      word-break: break-all;
+    }
+
+    .result-box a:hover { text-decoration: underline; }
+
+    .btn-copy {
+      background: var(--accent);
+      color: #fff;
+      padding: 6px 14px;
+      border-radius: 7px;
+      font-size: 0.8rem;
+      flex-shrink: 0;
+    }
+
+    .btn-copy:hover { background: #244820; transform: translateY(-1px); }
+    .btn-copy.copied { background: #555; }
+
+    .short-code-badge {
+      font-size: 0.78rem;
+      color: var(--ink-muted);
+      margin-bottom: 20px;
+    }
+
+    .short-code-badge span {
+      font-family: var(--mono);
+      color: var(--ink);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 2px 8px;
+    }
+
+    .divider {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 0 0 24px;
+    }
+
+    .analytics-row {
+      display: flex;
+      gap: 8px;
+    }
+
+    .analytics-row input {
+      flex: 1;
+      padding: 10px 14px;
+      border: 1.5px solid var(--border);
+      border-radius: 10px;
+      font-family: var(--mono);
+      font-size: 0.85rem;
+      color: var(--ink);
+      background: var(--bg);
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .analytics-row input:focus { border-color: var(--accent); background: #fff; }
+    .analytics-row input::placeholder { font-family: var(--sans); color: var(--ink-muted); }
+
+    .btn-outline {
+      background: var(--bg);
+      color: var(--ink);
+      border: 1.5px solid var(--border);
+      padding: 10px 16px;
+    }
+
+    .btn-outline:hover { border-color: var(--ink); transform: translateY(-1px); }
+    .btn-outline:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+    .analytics-result {
+      margin-top: 16px;
+      border: 1.5px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      animation: fadeUp 0.3s ease both;
+    }
+
+    .analytics-result .row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.875rem;
+    }
+
+    .analytics-result .row:last-child { border-bottom: none; }
+    .analytics-result .row .label { color: var(--ink-muted); font-size: 0.8rem; letter-spacing: 0.03em; }
+
+    .analytics-result .row .value {
+      font-family: var(--mono);
+      font-size: 0.85rem;
+      color: var(--ink);
+      max-width: 280px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .analytics-result .row .value.clicks {
+      font-size: 1.1rem;
+      font-weight: 500;
+      color: var(--accent);
+    }
+
+    .error-msg { font-size: 0.82rem; color: var(--danger); margin-top: 8px; }
+
+    footer {
+      margin-top: 32px;
+      text-align: center;
+      font-size: 0.78rem;
+      color: var(--ink-muted);
+      animation: fadeUp 0.6s ease 0.2s both;
+    }
+
+    footer a { color: var(--ink-muted); text-decoration: underline; text-underline-offset: 3px; }
+
+    .hidden { display: none !important; }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(14px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 14px; height: 14px;
+      border: 2px solid rgba(255,255,255,0.4);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <div class="wordmark">sn<em>i</em>p</div>
+      <p>Paste long. Get short. Simple.</p>
+    </header>
+
+    <div class="card">
+      <!-- Shorten Section -->
+      <div class="section-label">Shorten a URL</div>
+      <div class="input-row">
+        <input type="url" id="urlInput" placeholder="https://your-long-url.com/goes/here" />
+        <button class="btn btn-primary" id="shortenBtn" onclick="shortenUrl()">Snip it</button>
+      </div>
+
+      <div id="resultBox" class="result-box hidden">
+        <a id="shortLink" href="#" target="_blank"></a>
+        <button class="btn btn-copy" id="copyBtn" onclick="copyLink()">Copy</button>
+      </div>
+      <div id="shortCodeBadge" class="short-code-badge hidden" style="margin-bottom: 20px;">
+        Short code: <span id="shortCodeValue"></span>
+      </div>
+      <div id="shortenError" class="error-msg hidden"></div>
+
+      <hr class="divider" />
+
+      <!-- Analytics Section -->
+      <div class="section-label">Analytics</div>
+      <div class="analytics-row">
+        <input type="text" id="codeInput" placeholder="Enter short code (e.g. aB3x9k)" />
+        <button class="btn btn-outline" id="analyticsBtn" onclick="fetchAnalytics()">Look up</button>
+      </div>
+      <div id="analyticsError" class="error-msg hidden"></div>
+
+      <div id="analyticsResult" class="analytics-result hidden">
+        <div class="row">
+          <span class="label">Short code</span>
+          <span class="value" id="aCode"></span>
+        </div>
+        <div class="row">
+          <span class="label">Original URL</span>
+          <span class="value" id="aUrl" title=""></span>
+        </div>
+        <div class="row">
+          <span class="label">Total clicks</span>
+          <span class="value clicks" id="aClicks"></span>
+        </div>
+        <div class="row">
+          <span class="label">Created</span>
+          <span class="value" id="aCreated"></span>
+        </div>
+      </div>
+    </div>
+
+    <footer>
+      Built with Node.js, PostgreSQL &amp; Redis ·
+      <a href="https://github.com/ritt25/url-shortener" target="_blank">GitHub</a>
+    </footer>
+  </div>
+
+  <script>
+    const API = '';
+
+    async function shortenUrl() {
+      const input = document.getElementById('urlInput');
+      const btn = document.getElementById('shortenBtn');
+      const resultBox = document.getElementById('resultBox');
+      const shortLink = document.getElementById('shortLink');
+      const errorDiv = document.getElementById('shortenError');
+      const url = input.value.trim();
+
+      if (!url) return;
+
+      errorDiv.classList.add('hidden');
+      resultBox.classList.add('hidden');
+      document.getElementById('shortCodeBadge').classList.add('hidden');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span>Snipping…';
+
+      try {
+        const res = await fetch(`${API}/shorten`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Something went wrong');
+
+        shortLink.href = data.short_url;
+        shortLink.textContent = data.short_url;
+        resultBox.classList.remove('hidden');
+        document.getElementById('shortCodeValue').textContent = data.short_code;
+        document.getElementById('shortCodeBadge').classList.remove('hidden');
+      } catch (err) {
+        errorDiv.textContent = err.message;
+        errorDiv.classList.remove('hidden');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = 'Snip it';
+      }
+    }
+
+    function copyLink() {
+      const link = document.getElementById('shortLink').textContent;
+      const btn = document.getElementById('copyBtn');
+      navigator.clipboard.writeText(link).then(() => {
+        btn.textContent = 'Copied!';
+        btn.classList.add('copied');
+        setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+      });
+    }
+
+    async function fetchAnalytics() {
+      const input = document.getElementById('codeInput');
+      const btn = document.getElementById('analyticsBtn');
+      const resultDiv = document.getElementById('analyticsResult');
+      const errorDiv = document.getElementById('analyticsError');
+      const code = input.value.trim();
+
+      if (!code) return;
+
+      errorDiv.classList.add('hidden');
+      resultDiv.classList.add('hidden');
+      btn.disabled = true;
+      btn.textContent = 'Looking…';
+
+      try {
+        const res = await fetch(`${API}/analytics/${code}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Not found');
+
+        document.getElementById('aCode').textContent = data.short_code;
+        const urlEl = document.getElementById('aUrl');
+        urlEl.textContent = data.original_url;
+        urlEl.title = data.original_url;
+        document.getElementById('aClicks').textContent = data.clicks;
+        document.getElementById('aCreated').textContent = new Date(data.created_at).toLocaleString();
+        resultDiv.classList.remove('hidden');
+      } catch (err) {
+        errorDiv.textContent = err.message;
+        errorDiv.classList.remove('hidden');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Look up';
+      }
+    }
+
+    document.getElementById('urlInput').addEventListener('keydown', e => {
+      if (e.key === 'Enter') shortenUrl();
+    });
+    document.getElementById('codeInput').addEventListener('keydown', e => {
+      if (e.key === 'Enter') fetchAnalytics();
+    });
+  </script>
+</body>
+</html>

@@ -1,12 +1,14 @@
 require("dotenv").config();
 const rateLimit = require("express-rate-limit");
 const express = require("express");
+const path = require("path");
 const { customAlphabet } = require("nanoid");
 const { pool, initDB } = require("./db");
 const { client: redisClient, connectCache } = require("./cache");
 
 const app = express();
 app.use(express.json());
+app.use(express.static(path.join(__dirname, "public")));
 
 const limiter = rateLimit({
   windowMs: 60 * 1000,
@@ -18,40 +20,17 @@ const limiter = rateLimit({
 
 app.use("/shorten", limiter);
 
-// Base-62 alphabet — this is what makes short codes like "aB3x9"
 const nanoid = customAlphabet(
   "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
   6
 );
 
-// --- ROUTE 0: Homepage ---
-app.get("/", (req, res) => {
-  res.send(`
-    <!DOCTYPE html>
-    <html>
-      <head><title>URL Shortener</title></head>
-      <body>
-        <h1>🔗 URL Shortener</h1>
-        <p>API is running!</p>
-        <h3>Usage:</h3>
-        <ul>
-          <li><strong>POST /shorten</strong> — Body: <code>{ "url": "https://example.com" }</code></li>
-          <li><strong>GET /:code</strong> — Redirects to original URL</li>
-          <li><strong>GET /analytics/:code</strong> — View click stats</li>
-        </ul>
-      </body>
-    </html>
-  `);
-});
-
 // --- ROUTE 1: Shorten a URL ---
 app.post("/shorten", async (req, res) => {
   const { url } = req.body;
-
   if (!url) return res.status(400).json({ error: "URL is required" });
 
   const short_code = nanoid();
-
   await pool.query(
     "INSERT INTO urls (short_code, original_url) VALUES ($1, $2)",
     [short_code, url]
@@ -66,7 +45,6 @@ app.post("/shorten", async (req, res) => {
 // --- ROUTE 2: Analytics (must be before /:code) ---
 app.get("/analytics/:code", async (req, res) => {
   const { code } = req.params;
-
   const result = await pool.query(
     "SELECT short_code, original_url, clicks, created_at FROM urls WHERE short_code = $1",
     [code]
@@ -101,7 +79,6 @@ app.get("/:code", async (req, res) => {
   }
 
   const originalUrl = result.rows[0].original_url;
-
   await redisClient.setEx(code, 86400, originalUrl);
   await pool.query("UPDATE urls SET clicks = clicks + 1 WHERE short_code = $1", [code]);
 
