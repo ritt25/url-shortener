@@ -24,13 +24,33 @@ const nanoid = customAlphabet(
   6
 );
 
+// --- ROUTE 0: Homepage ---
+app.get("/", (req, res) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+      <head><title>URL Shortener</title></head>
+      <body>
+        <h1>🔗 URL Shortener</h1>
+        <p>API is running!</p>
+        <h3>Usage:</h3>
+        <ul>
+          <li><strong>POST /shorten</strong> — Body: <code>{ "url": "https://example.com" }</code></li>
+          <li><strong>GET /:code</strong> — Redirects to original URL</li>
+          <li><strong>GET /analytics/:code</strong> — View click stats</li>
+        </ul>
+      </body>
+    </html>
+  `);
+});
+
 // --- ROUTE 1: Shorten a URL ---
 app.post("/shorten", async (req, res) => {
   const { url } = req.body;
 
   if (!url) return res.status(400).json({ error: "URL is required" });
 
-  const short_code = nanoid(); // e.g. "aB3x9k"
+  const short_code = nanoid();
 
   await pool.query(
     "INSERT INTO urls (short_code, original_url) VALUES ($1, $2)",
@@ -43,40 +63,7 @@ app.post("/shorten", async (req, res) => {
   });
 });
 
-// --- ROUTE 2: Redirect short → original ---
-app.get("/:code", async (req, res) => {
-  const { code } = req.params;
-
-  // 1. Check Redis cache first
-  const cached = await redisClient.get(code);
-  if (cached) {
-    console.log(`Cache HIT for ${code}`);
-    await pool.query("UPDATE urls SET clicks = clicks + 1 WHERE short_code = $1", [code]);
-    return res.redirect(cached);
-  }
-
-  // 2. Cache miss — go to Postgres
-  console.log(`Cache MISS for ${code}`);
-  const result = await pool.query(
-    "SELECT original_url FROM urls WHERE short_code = $1",
-    [code]
-  );
-
-  if (result.rows.length === 0) {
-    return res.status(404).json({ error: "Short URL not found" });
-  }
-
-  const originalUrl = result.rows[0].original_url;
-
-  // 3. Store in Redis for next time (expires after 24 hours)
-  await redisClient.setEx(code, 86400, originalUrl);
-
-  await pool.query("UPDATE urls SET clicks = clicks + 1 WHERE short_code = $1", [code]);
-
-  res.redirect(originalUrl);
-});
-
-// --- ROUTE 3: Analytics ---
+// --- ROUTE 2: Analytics (must be before /:code) ---
 app.get("/analytics/:code", async (req, res) => {
   const { code } = req.params;
 
@@ -90,6 +77,35 @@ app.get("/analytics/:code", async (req, res) => {
   }
 
   res.json(result.rows[0]);
+});
+
+// --- ROUTE 3: Redirect short → original ---
+app.get("/:code", async (req, res) => {
+  const { code } = req.params;
+
+  const cached = await redisClient.get(code);
+  if (cached) {
+    console.log(`Cache HIT for ${code}`);
+    await pool.query("UPDATE urls SET clicks = clicks + 1 WHERE short_code = $1", [code]);
+    return res.redirect(cached);
+  }
+
+  console.log(`Cache MISS for ${code}`);
+  const result = await pool.query(
+    "SELECT original_url FROM urls WHERE short_code = $1",
+    [code]
+  );
+
+  if (result.rows.length === 0) {
+    return res.status(404).json({ error: "Short URL not found" });
+  }
+
+  const originalUrl = result.rows[0].original_url;
+
+  await redisClient.setEx(code, 86400, originalUrl);
+  await pool.query("UPDATE urls SET clicks = clicks + 1 WHERE short_code = $1", [code]);
+
+  res.redirect(originalUrl);
 });
 
 // --- START SERVER ---
