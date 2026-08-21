@@ -1,0 +1,10 @@
+# Normalize all text files to LF in the repository.
+# Without this, an editor writing CRLF makes every line of every file
+# show as changed, which buries real diffs.
+* text=auto eol=lf
+
+# Binary / generated — never touch or diff these
+package-lock.json  -diff
+*.png binary
+*.jpg binary
+*.ico binary
