@@ -1,10 +1,10 @@
-require("dotenv").config();
+require("dotenv").config({ quiet: true });
 const rateLimit = require("express-rate-limit");
 const express = require("express");
 const path = require("path");
 const { customAlphabet } = require("nanoid");
-const { pool, initDB } = require("./db");
-const { client: redisClient, connectCache } = require("./cache");
+const { pool } = require("./db");
+const { client: redisClient } = require("./cache");
 
 const app = express();
 app.use(express.json());
@@ -16,6 +16,9 @@ const limiter = rateLimit({
   message: { error: "Too many requests, slow down." },
   standardHeaders: true,
   legacyHeaders: false,
+  // The suite makes more than 10 shorten calls in a minute. Without this the
+  // later tests fail with 429 and the failure looks like a bug in the route.
+  skip: () => process.env.NODE_ENV === "test",
 });
 
 app.use("/shorten", limiter);
@@ -85,13 +88,4 @@ app.get("/:code", async (req, res) => {
   res.redirect(originalUrl);
 });
 
-// --- START SERVER ---
-const start = async () => {
-  await connectCache();
-  await initDB();
-  app.listen(process.env.PORT, () => {
-    console.log(`🚀 Running at ${process.env.BASE_URL}`);
-  });
-};
-
-start();
+module.exports = app;
