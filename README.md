@@ -1,6 +1,6 @@
 # snip — URL Shortener
 
-A production-deployed URL shortener built with real engineering depth. Live at **[url-shortener-7ive.onrender.com](https://url-shortener-7ive.onrender.com)**.
+A production-grade URL shortener built with real engineering depth.
 
 ## Tech Stack
 
