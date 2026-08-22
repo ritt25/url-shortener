@@ -2,10 +2,10 @@ require("dotenv").config({ quiet: true });
 const rateLimit = require("express-rate-limit");
 const express = require("express");
 const path = require("path");
-const { customAlphabet } = require("nanoid");
 const { pool } = require("./db");
 const { safeGet, safeSetEx, isCacheUp } = require("./cache");
-const { validateUrl } = require("./lib/urls");
+const { validateUrl, hashUrl } = require("./lib/urls");
+const { createShortCode } = require("./lib/codes");
 const { AppError, errorHandler, notFoundHandler } = require("./lib/errors");
 
 const app = express();
@@ -30,11 +30,6 @@ const limiter = rateLimit({
 });
 
 app.use("/shorten", limiter);
-
-const nanoid = customAlphabet(
-  "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
-  6
-);
 
 const CACHE_TTL_SECONDS = 86400;
 
@@ -62,12 +57,25 @@ app.get("/health", async (req, res) => {
 // --- ROUTE: shorten ---
 app.post("/shorten", async (req, res) => {
   const url = validateUrl(req.body?.url);
+  const urlHash = hashUrl(url);
 
-  const short_code = nanoid();
-  await pool.query(
-    "INSERT INTO urls (short_code, original_url) VALUES ($1, $2)",
-    [short_code, url]
+  // Fast path: we have already shortened this URL, hand back the same code.
+  // This is only an optimisation — it is NOT what makes the operation safe.
+  // Two requests can both find nothing here and both go on to INSERT; the
+  // unique constraint inside createShortCode is what actually arbitrates.
+  const existing = await pool.query(
+    "SELECT short_code FROM urls WHERE url_hash = $1",
+    [urlHash]
   );
+  if (existing.rows.length > 0) {
+    const short_code = existing.rows[0].short_code;
+    return res.json({
+      short_url: `${process.env.BASE_URL}/${short_code}`,
+      short_code,
+    });
+  }
+
+  const { short_code } = await createShortCode(pool, url, urlHash);
 
   res.json({
     short_url: `${process.env.BASE_URL}/${short_code}`,
