@@ -76,6 +76,9 @@ k6 run -e BASE_URL=http://localhost:3000 loadtest/redirect.js
 k6 run -e BASE_URL=https://url-shortener-7ive.onrender.com loadtest/redirect.js
 ```
 
+Local figures are from the current build. The Render column was measured on the
+build immediately prior to click buffering; see the note on re-running below.
+
 | Metric | Local (docker-compose) | Render (free tier) |
 |---|---|---|
 | Requests | 773,771 | 4,105 |
@@ -101,7 +104,8 @@ Redis `INCR` flushed on an interval removed that write from the request path:
 3.8x throughput and a 5.4x lower p95, from deleting one write per request.
 Verified lossless: 773,772 redirects produced exactly 773,772 recorded clicks.
 
-The remote column is network-bound, so it is unchanged by this — see below.
+The remote column is network-bound and dominated by a cross-continent hop, so
+buffering does not move it meaningfully — see below.
 
 ### Where the latency actually lives
 
@@ -129,6 +133,23 @@ Throughput tells the same story from the other side. 41 req/s remote is not a
 capacity ceiling — with 20 virtual users each waiting ~270 ms per round trip,
 41 req/s is simply what arithmetic allows. The local run, with the same 20
 users, reached 2,923 req/s because each one finished 25x sooner.
+
+### A note on load testing the free tier
+
+Repeating the remote run shortly after the first produced a 97% error rate.
+The service itself stayed healthy and recovered immediately — the platform was
+shedding load, not failing.
+
+Worth understanding, because the failure is self-amplifying: when requests fail
+instantly instead of taking ~270 ms, each virtual user loops straight into the
+next one. Offered load jumped from 41 req/s to 911 req/s without the test
+changing at all, which provoked more shedding. A load test that starts failing
+will keep failing harder unless it backs off.
+
+The lesson for the numbers above: throughput measured from a single machine
+across an ocean against a free tier says more about the path and the platform's
+limits than about the application. The local column is the one that describes
+this code.
 
 ### Click counting: the durability tradeoff
 
