@@ -4,9 +4,19 @@ const express = require("express");
 const path = require("path");
 const { customAlphabet } = require("nanoid");
 const { pool } = require("./db");
-const { client: redisClient } = require("./cache");
+const { safeGet, safeSetEx, isCacheUp } = require("./cache");
+const { validateUrl } = require("./lib/urls");
+const { AppError, errorHandler, notFoundHandler } = require("./lib/errors");
 
 const app = express();
+
+// Render sits one proxy in front of us. Without this, req.ip is the proxy's
+// address for every visitor, so the rate limiter buckets the entire internet
+// into a single key: "10 per minute" becomes 10 per minute in total.
+// Use 1, not true. `true` trusts the whole X-Forwarded-For chain, letting a
+// caller spoof a header to get a fresh bucket and bypass the limit entirely.
+app.set("trust proxy", 1);
+
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
@@ -16,8 +26,6 @@ const limiter = rateLimit({
   message: { error: "Too many requests, slow down." },
   standardHeaders: true,
   legacyHeaders: false,
-  // The suite makes more than 10 shorten calls in a minute. Without this the
-  // later tests fail with 429 and the failure looks like a bug in the route.
   skip: () => process.env.NODE_ENV === "test",
 });
 
@@ -28,10 +36,32 @@ const nanoid = customAlphabet(
   6
 );
 
-// --- ROUTE 1: Shorten a URL ---
+const CACHE_TTL_SECONDS = 86400;
+
+// --- ROUTE: health ---
+// Reports degraded rather than unhealthy when only the cache is down, matching
+// what the redirect route actually does. A health check that fails on a dead
+// cache would have Render restart a service that is working fine.
+app.get("/health", async (req, res) => {
+  let dbUp = false;
+  try {
+    await pool.query("SELECT 1");
+    dbUp = true;
+  } catch (err) {
+    console.error("Health check: database unreachable:", err.message);
+  }
+
+  const cacheUp = isCacheUp();
+  res.status(dbUp ? 200 : 503).json({
+    status: dbUp ? (cacheUp ? "ok" : "degraded") : "error",
+    database: dbUp ? "up" : "down",
+    cache: cacheUp ? "up" : "down",
+  });
+});
+
+// --- ROUTE: shorten ---
 app.post("/shorten", async (req, res) => {
-  const { url } = req.body;
-  if (!url) return res.status(400).json({ error: "URL is required" });
+  const url = validateUrl(req.body?.url);
 
   const short_code = nanoid();
   await pool.query(
@@ -45,7 +75,7 @@ app.post("/shorten", async (req, res) => {
   });
 });
 
-// --- ROUTE 2: Analytics (must be before /:code) ---
+// --- ROUTE: analytics (must stay above /:code) ---
 app.get("/analytics/:code", async (req, res) => {
   const { code } = req.params;
   const result = await pool.query(
@@ -54,38 +84,43 @@ app.get("/analytics/:code", async (req, res) => {
   );
 
   if (result.rows.length === 0) {
-    return res.status(404).json({ error: "Not found" });
+    throw new AppError(404, "Not found");
   }
 
   res.json(result.rows[0]);
 });
 
-// --- ROUTE 3: Redirect short → original ---
+// --- ROUTE: redirect ---
 app.get("/:code", async (req, res) => {
   const { code } = req.params;
 
-  const cached = await redisClient.get(code);
+  // safeGet returns null on any cache failure, so a dead Redis reads as a
+  // plain cache miss and we carry on to Postgres.
+  const cached = await safeGet(code);
   if (cached) {
-    console.log(`Cache HIT for ${code}`);
     await pool.query("UPDATE urls SET clicks = clicks + 1 WHERE short_code = $1", [code]);
     return res.redirect(cached);
   }
 
-  console.log(`Cache MISS for ${code}`);
   const result = await pool.query(
     "SELECT original_url FROM urls WHERE short_code = $1",
     [code]
   );
 
   if (result.rows.length === 0) {
-    return res.status(404).json({ error: "Short URL not found" });
+    throw new AppError(404, "Short URL not found");
   }
 
   const originalUrl = result.rows[0].original_url;
-  await redisClient.setEx(code, 86400, originalUrl);
+  await safeSetEx(code, CACHE_TTL_SECONDS, originalUrl);
   await pool.query("UPDATE urls SET clicks = clicks + 1 WHERE short_code = $1", [code]);
 
   res.redirect(originalUrl);
 });
+
+// Both of these must stay last. Express matches in registration order, so a
+// 404 handler placed higher would swallow every route below it.
+app.use(notFoundHandler);
+app.use(errorHandler);
 
 module.exports = app;
