@@ -66,19 +66,56 @@ URL shortener data is highly relational and structured — short code, original 
 
 ## Performance (k6 Load Test)
 
-Tested against the live Render deployment:
+Same script, two targets: `loadtest/redirect.js`. 20 virtual users, 70s
+(20s ramp / 40s hold / 10s ramp down), hammering `GET /:code` on a warmed
+cache. `setup()` creates its own link, so the run does not depend on any
+particular row existing.
 
-| Metric | Result |
+```bash
+k6 run -e BASE_URL=http://localhost:3000 loadtest/redirect.js
+k6 run -e BASE_URL=https://url-shortener-7ive.onrender.com loadtest/redirect.js
+```
+
+| Metric | Local (docker-compose) | Render (free tier) |
+|---|---|---|
+| Requests | 204,663 | 4,105 |
+| Throughput | 2,923 req/s | 41 req/s |
+| Avg latency | 5.4 ms | 276 ms |
+| p90 latency | 10.2 ms | 297 ms |
+| p95 latency | 12.7 ms | 316 ms |
+| Fastest request | 0.4 ms | 212 ms |
+| Error rate | 0% | 0% |
+
+### Where the latency actually lives
+
+The two columns differ by ~25x, and almost none of that is application code.
+
+Breaking down a single warm request to Render from Mumbai:
+
+| Stage | Time |
 |---|---|
-| Virtual Users | 20 concurrent |
-| Total Requests | 1,322 |
-| Success Rate | 100% |
-| Avg Latency | 257ms |
-| p90 Latency | 271ms |
-| p95 Latency | 283ms |
-| Error Rate | 0% |
+| TCP connect to Cloudflare edge | ~19 ms |
+| TLS handshake | ~46 ms |
+| Edge → Render origin (`gcp-us-west1`, Oregon) → response | ~170 ms |
 
-> Numbers reflect free-tier hosting constraints. The Redis cache layer is designed to scale horizontally — cache hits never touch the database, so Node instances can be scaled behind a load balancer while Redis absorbs redirect traffic.
+The origin is in Oregon; requests originate from India. That single geographic
+hop accounts for the bulk of every measurement. The local column — same code,
+same queries, no ocean — settles at 12.7 ms p95, and the fastest remote request
+ever recorded (212 ms) is still slower than the slowest local one (77 ms).
+
+So roughly **4% of remote p95 is this service and 96% is distance**. The
+honest read: the application is not the bottleneck, the free tier's single
+region is. Moving the origin closer to users would do more for p95 than any
+amount of query optimisation.
+
+Throughput tells the same story from the other side. 41 req/s remote is not a
+capacity ceiling — with 20 virtual users each waiting ~270 ms per round trip,
+41 req/s is simply what arithmetic allows. The local run, with the same 20
+users, reached 2,923 req/s because each one finished 25x sooner.
+
+> Cache hits never touch Postgres, so Node instances stay stateless and can be
+> scaled horizontally behind a load balancer with Redis absorbing redirect
+> traffic.
 
 ---
 
