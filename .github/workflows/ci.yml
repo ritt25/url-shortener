@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+
+    # Real Postgres and Redis, not mocks. A mocked database never enforces a
+    # unique constraint, so the 23505 branching in src/lib/codes.js could be
+    # completely wrong and a mocked suite would still pass. These containers
+    # are the reason those tests mean anything.
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: admin
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: urlshortener
+        ports:
+          - 5432:5432
+        # Without a health check the job starts running tests the moment the
+        # container is created, which is several seconds before Postgres will
+        # accept a connection. That failure looks like a broken test.
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # Throwaway credentials for throwaway containers. These match
+      # docker-compose.yml so local and CI behave identically.
+      DATABASE_URL: postgresql://admin:password@localhost:5432/urlshortener
+      REDIS_URL: redis://localhost:6379
+      BASE_URL: http://localhost:3000
+      PORT: 3000
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          # Matches the version Render runs, so CI cannot pass on a version
+          # production never sees.
+          node-version: 22
+          cache: npm
+
+      # npm ci, not npm install: it installs exactly what package-lock.json
+      # pins and fails if the lockfile and package.json disagree, so CI tests
+      # the dependency tree that will actually be deployed.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
