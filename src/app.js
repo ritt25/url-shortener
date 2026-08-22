@@ -6,6 +6,7 @@ const { pool } = require("./db");
 const { safeGet, safeSetEx, isCacheUp } = require("./cache");
 const { validateUrl, hashUrl } = require("./lib/urls");
 const { createShortCode } = require("./lib/codes");
+const { recordClick, getPendingClicks } = require("./lib/clicks");
 const { AppError, errorHandler, notFoundHandler } = require("./lib/errors");
 
 const app = express();
@@ -95,7 +96,11 @@ app.get("/analytics/:code", async (req, res) => {
     throw new AppError(404, "Not found");
   }
 
-  res.json(result.rows[0]);
+  // Stored count plus whatever is still buffered in Redis, so a click is never
+  // invisible for up to a flush interval.
+  const row = result.rows[0];
+  const pending = await getPendingClicks(code);
+  res.json({ ...row, clicks: row.clicks + pending });
 });
 
 // --- ROUTE: redirect ---
@@ -106,7 +111,9 @@ app.get("/:code", async (req, res) => {
   // plain cache miss and we carry on to Postgres.
   const cached = await safeGet(code);
   if (cached) {
-    await pool.query("UPDATE urls SET clicks = clicks + 1 WHERE short_code = $1", [code]);
+    // A cache hit now touches Postgres zero times: the lookup came from Redis
+    // and the click is counted in Redis too.
+    await recordClick(pool, code);
     return res.redirect(cached);
   }
 
@@ -121,7 +128,7 @@ app.get("/:code", async (req, res) => {
 
   const originalUrl = result.rows[0].original_url;
   await safeSetEx(code, CACHE_TTL_SECONDS, originalUrl);
-  await pool.query("UPDATE urls SET clicks = clicks + 1 WHERE short_code = $1", [code]);
+  await recordClick(pool, code);
 
   res.redirect(originalUrl);
 });
