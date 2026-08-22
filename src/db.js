@@ -26,6 +26,24 @@ const initDB = async () => {
     USING created_at AT TIME ZONE 'UTC'
   `);
 
+  // Session 3: dedupe identical URLs.
+  // Nullable on purpose — rows created before this column existed have no hash,
+  // and Postgres allows many NULLs in a unique index (NULL != NULL).
+  await pool.query(`ALTER TABLE urls ADD COLUMN IF NOT EXISTS url_hash CHAR(64)`);
+
+  // A NAMED constraint, because the insert path branches on err.constraint to
+  // tell a short_code collision apart from a duplicate URL. Postgres 15 has no
+  // ADD CONSTRAINT IF NOT EXISTS, hence the guard.
+  await pool.query(`
+    DO $$ BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'urls_url_hash_key'
+      ) THEN
+        ALTER TABLE urls ADD CONSTRAINT urls_url_hash_key UNIQUE (url_hash);
+      END IF;
+    END $$;
+  `);
+
   console.log("Database ready");
 };
 
