@@ -78,13 +78,30 @@ k6 run -e BASE_URL=https://url-shortener-7ive.onrender.com loadtest/redirect.js
 
 | Metric | Local (docker-compose) | Render (free tier) |
 |---|---|---|
-| Requests | 204,663 | 4,105 |
-| Throughput | 2,923 req/s | 41 req/s |
-| Avg latency | 5.4 ms | 276 ms |
-| p90 latency | 10.2 ms | 297 ms |
-| p95 latency | 12.7 ms | 316 ms |
-| Fastest request | 0.4 ms | 212 ms |
+| Requests | 773,771 | 4,105 |
+| Throughput | 11,051 req/s | 41 req/s |
+| Avg latency | 1.4 ms | 276 ms |
+| p90 latency | 2.1 ms | 297 ms |
+| p95 latency | 2.4 ms | 316 ms |
+| Fastest request | 0.3 ms | 212 ms |
 | Error rate | 0% | 0% |
+
+### Effect of buffering click counts
+
+Redirects originally issued a synchronous `UPDATE` to Postgres for the click
+counter, so a "cache hit" still cost one database write. Moving counting to a
+Redis `INCR` flushed on an interval removed that write from the request path:
+
+| Local, 20 VUs | Synchronous UPDATE | Buffered in Redis |
+|---|---|---|
+| Throughput | 2,923 req/s | **11,051 req/s** |
+| Avg latency | 5.4 ms | **1.4 ms** |
+| p95 latency | 12.7 ms | **2.4 ms** |
+
+3.8x throughput and a 5.4x lower p95, from deleting one write per request.
+Verified lossless: 773,772 redirects produced exactly 773,772 recorded clicks.
+
+The remote column is network-bound, so it is unchanged by this — see below.
 
 ### Where the latency actually lives
 
@@ -113,9 +130,22 @@ capacity ceiling — with 20 virtual users each waiting ~270 ms per round trip,
 41 req/s is simply what arithmetic allows. The local run, with the same 20
 users, reached 2,923 req/s because each one finished 25x sooner.
 
-> Cache hits never touch Postgres, so Node instances stay stateless and can be
-> scaled horizontally behind a load balancer with Redis absorbing redirect
-> traffic.
+### Click counting: the durability tradeoff
+
+Clicks are counted with a Redis `INCR` and flushed to Postgres every 10 seconds
+(`CLICK_FLUSH_MS`), plus once more on `SIGTERM` so ordinary deploys lose
+nothing. A hard crash loses at most one flush interval of counts.
+
+That is an explicit tradeoff, not an oversight: analytics counters are worth
+trading exact durability for a 5x latency win. A payment counter would not be.
+If Redis is unavailable the code falls back to writing Postgres directly, so
+counting degrades to the old, slower behaviour rather than being lost.
+`GET /analytics/:code` adds the buffered value to the stored one, so a click is
+never invisible while it waits to be flushed.
+
+> With counting buffered, a cache hit now touches Postgres zero times. Node
+> instances stay stateless and can be scaled horizontally behind a load
+> balancer with Redis absorbing redirect traffic.
 
 ---
 
