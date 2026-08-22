@@ -1,5 +1,7 @@
 # snip — URL Shortener
 
+[![CI](https://github.com/ritt25/url-shortener/actions/workflows/ci.yml/badge.svg)](https://github.com/ritt25/url-shortener/actions/workflows/ci.yml)
+
 A production-grade URL shortener built with real engineering depth.
 
 ## Tech Stack
