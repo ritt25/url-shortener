@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/ritt25/url-shortener/actions/workflows/ci.yml/badge.svg)](https://github.com/ritt25/url-shortener/actions/workflows/ci.yml)
 
-A production-grade URL shortener built with real engineering depth.
+A production-grade URL shortener built with real engineering depth. Live at https://url-shortener-7ive.onrender.com/
 
 ## Tech Stack
 
